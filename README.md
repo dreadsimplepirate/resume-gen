@@ -1,6 +1,10 @@
 # Resume Generator (`resume_gen.py`)
 
-Tailor your resume to any job description in seconds. This script builds a reusable, editable library of your real work experiences, analyzes a target job description, weaves in 3 custom keyword-matched bullets (configurable), strips AI writing tells so it sounds like you, and exports clean, ATS-friendly `.pdf` and `.docx` files.
+One script. Two commands. No clutter — that be the whole treasure map.
+
+Run `ingest` and this scallywag reads yer old resumes and stows 'em in a plain `profile.yaml` ye can open, edit, and keep: yer real experience, not a black box. Run `tailor` and it reads the job description, plucks out the keywords that matter, slips in three custom bullets (change the count with `--custom-bullets 5` if ye want a bigger broadside), scrapes off the AI-sounding bilge so it sounds like ye wrote it, and hands back clean, ATS-friendly `.docx` and `.pdf` files in seconds flat.
+
+No server, no database, no framework — just Python, PyYAML, a single script ye can read end to end, and `pypdf` only if yer PDFs need reading.
 
 ## 1. Setup
 
