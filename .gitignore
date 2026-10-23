@@ -1,0 +1,10 @@
+.env
+__pycache__/
+output/
+
+# personal data — never publish
+profile.yaml
+*.pdf
+*.docx
+jd_*.txt
+profile.yaml
