@@ -1,116 +1,98 @@
 ---
 name: resume-gen
-description: |
-  Builds a YAML work-experience library from sample resumes and generates ATS-ready,
-  humanized resumes tailored to a job description (.docx + .pdf), injecting a configurable
-  number of JD keyword bullets (default 3) into existing roles. Use when asked to tailor a
-  resume or CV to a job posting, build or update a resume profile from existing resumes,
-  extract job-description keywords for ATS matching, or produce resume documents.
+description: Draft tailored resumes and brainstorm role-specific experience to include, using an editable career profile and a job posting. Produces DOCX, PDF, and editing notes for the user to verify and revise afterward. Use for resume tailoring, resume-profile ingestion, and resume artifact review; explaining a job posting alone does not require generation.
 ---
 
-# Resume Generator (`resume_gen.py`)
+# Resume drafting and brainstorming
 
-Single-file Python CLI. `ingest` builds `profile.yaml` from real resumes; `tailor` rewrites it against a job description and exports `.docx` + `.pdf`.
+Use `resume_gen.py` to turn career context and a specific job posting into a persuasive, editable draft. Brainstorm useful adjacent experience rather than treating the profile as an exhaustive list. The user verifies, edits, and selects proposals after generation.
 
-## Requirements
+## Workflow
 
-Python 3.9+ and `PyYAML`. PDF input also needs `pypdf` or system `pdftotext`.
+1. **Read the target and career context.** Use the exact posting or supplied JD text. For a URL, retrieve the job and save its text locally with the URL and retrieval date. If unavailable, use a reproduction tied to the exact job ID and identify that source limitation. Ask for missing JD text only when no usable source is available. Do not substitute a different job.
+2. **Choose positioning.** Identify the actual work, business context, and important required/preferred qualifications. Use `profile.yaml` for strengths, career chronology, and voice. Do not rewrite it wholesale.
+3. **Generate and brainstorm.** Run `tailor`. Deliver the requested custom bullets in the resume; contextual proposals may include responsibilities or tools absent from the profile. Do not require a verification interview, confirmation, or approval before drafting. Preserve existing metrics; use placeholders in optional variants when numerical detail is needed. Keep degrees and certifications out of Skills.
+4. **Review the editorial choices.** Read the JSON and Markdown reports. Prioritize relevant accomplishments, integrate useful custom bullets near the top, consolidate repeated skills, and compress unrelated older roles. Aim for roughly 12–18 skills as a starting point, not a quota. Preserve chronology and requested custom content. Review substantive expansions of ordinary bullets as well as custom bullets in the editing notes.
+5. **Inspect both documents.** Render every page of DOCX and PDF using available document/PDF tools; compare extracted content with the report separately. Check heading/date separation, readability, whole bullets, Education grouping, and page balance. Prefer two balanced pages to one crowded page plus a fragment. Never shrink text merely to force one page.
+6. **Repair demonstrated issues and deliver.** Make one focused editorial/layout repair when needed and recheck affected artifacts. If a prerequisite is unavailable, deliver the usable draft and identify the unverified part. Include the resume files, concise positioning rationale, and editing notes. Clearly distinguish included proposals from optional alternatives. Do not promise an ATS score or hiring outcome.
 
-Set credentials in `.env` (loaded from the current directory, then the script directory; existing environment variables take precedence):
+A neighboring request to explain a posting should be answered directly without generating resumes or modifying the profile.
+
+## Setup and backends
+
+Python 3.9+ and `PyYAML`. PDF input additionally requires optional `pypdf` or system `pdftotext`.
+
+Global flags go **before** `ingest` or `tailor`.
+
+### Codex CLI
+
+```bash
+python3 resume_gen.py --backend codex tailor -p profile.yaml -j jd.txt -o output/ --name-prefix target_role
+python3 resume_gen.py --backend codex ingest sample.pdf -o profile.yaml
+```
+
+Uses installed Codex CLI authentication and configuration. Check `codex login status`; sign in with `codex login` if needed. No resume-generator API key is required. Omit `--model` for the CLI default; an explicit `--model` overrides it. API model environment variables do not select the Codex model.
+
+Each pass runs a separate text-only task in a temporary directory with read-only sandboxing. It receives supplied prompts/content, not this chat's history. Allow up to 600 seconds per call. The script does not automatically retry CLI failures.
+
+### HTTP API
+
+The default backend is `api`. Configure `.env` or existing environment variables:
 
 ```dotenv
-OPENCODE_API_KEY="your-api-key"
+OPENCODE_API_KEY="your-key"
 OPENCODE_BASE_URL="opencode-go"
 OPENCODE_MODEL="your-model"
 ```
 
-Keys are also read from `OPENAI_*` and `OPENROUTER_*` variables. `--api-key`, `--base-url`, and `--model` override env for one run. Base URL accepts `opencode-go`, `opencode`, `openrouter`, or any OpenAI-compatible URL; the model ID is routed to the matching API family (Chat Completions, Responses, Anthropic Messages, Gemini) automatically.
+`OPENAI_*` and `OPENROUTER_*` are also supported. Existing environment variables win over `.env`; CLI overrides win over both. Base URLs accept `opencode-go`, `opencode`, `openrouter`, or an OpenAI-compatible URL.
 
-## Workflow
-
-```
-- [ ] 1. Ingest sample resumes into profile.yaml
-- [ ] 2. Curate profile.yaml (optional)
-- [ ] 3. Tailor to the job description
-- [ ] 4. Review the output and report
-```
-
-### 1. Ingest
+## Ingestion
 
 ```bash
 python3 resume_gen.py ingest resume1.pdf resume2.docx -o profile.yaml
 ```
 
-Accepts `.pdf`, `.docx`, `.txt`, `.md`, `.yaml`, `.yml`. Re-running merges into an existing profile: new roles, bullets, skills, education, and certifications are added; duplicate bullets are dropped; existing `basics` and `voice_profile` values win, so manual edits survive.
+Accepts PDF, DOCX, TXT, MD, YAML, and YML. Re-ingestion merges rather than replacing existing basics/voice edits. The profile can be curated manually; role bullets and voice samples guide generation. Voice samples without an assigned role are style context, not automatically part of a particular job.
 
-### 2. Curate `profile.yaml` (optional)
-
-- `basics`, `skills`, `certifications`, `education`, `roles[].bullets` — plain text, edit directly.
-- `voice_profile.sample_bullets` — verbatim bullets that anchor the humanizer's sentence length and verb style.
-- `voice_profile.uses_dashes` — allow em/en dashes; set automatically from the samples at ingest time.
-
-### 3. Tailor
+## Tailoring
 
 ```bash
-python3 resume_gen.py tailor \
-  -p profile.yaml \
-  -j jd.txt \
-  -o output/ \
-  --name-prefix acme_security \
-  --custom-bullets 3
+python3 resume_gen.py --backend codex tailor \
+  -p profile.yaml -j jd.txt -o output/ \
+  --name-prefix acme_security --custom-bullets 3
 ```
 
-`-j` accepts the same file formats as `ingest`. `-p` must already exist — `tailor` never creates the profile.
+`-p` must exist. `-j` accepts the same file types as ingestion. `--custom-bullets` is an integer ≥ 0, default 3; zero disables the request for additional custom bullets. Report a count shortfall without blocking the delivered draft.
 
-### 4. Review
+The first pass analyzes the role, selects/reorders content, and brainstorms included proposals and optional alternatives. The second edits selected bullet text only. Stable IDs preserve selection and order; missing style content falls back to the draft. Cleanup normalizes formatting without deleting outcome clauses or enforcing word bans. The profile's employment metadata stays intact. Skills are selected editorially, including useful JD suggestions.
 
-Read `output/<name-prefix>_report.json`:
+## Outputs and editing notes
 
-- `extracted_keywords` — JD keywords the resume now targets.
-- `custom_bullets_report` — every injected bullet with its company, title, and matched keywords.
-- `skills` — filtered after the LLM pass: only skills from `profile.yaml` or exact extracted keywords survive, so invented tools are dropped.
+For prefix `target_role`:
 
-If the model returns a different number of custom bullets than `--custom-bullets` asked for, the command prints a warning with both numbers.
+- `output/target_role.docx` — editable resume.
+- `output/target_role.pdf` — single-column resume with balanced pagination.
+- `output/target_role_report.json` — selected content, `job_analysis`, `custom_bullets_report`, `brainstorming`, `editorial_notes`, and `generation_notes`.
+- `output/target_role_review.md` — positioning, job themes, included proposals/expansions, optional alternatives, and details to consider afterward.
 
-Custom bullets are model-drafted claims about the candidate's experience, not facts taken from the sample resumes. Confirm each one is true before the user sends the resume.
+Section order remains Certifications → Work Experience → Education → Skills, with no summary. All education and credential entries remain; their order can be tailored. The PDF's built-in fonts use WinAnsi; use DOCX for unsupported characters and report the limitation.
 
-## Outputs
+## Flag reference
 
-| File | Contents |
-| --- | --- |
-| `output/<name-prefix>.docx` | Single-column Word document |
-| `output/<name-prefix>.pdf` | PDF 1.4, centered navy header, right-aligned dates, hanging-indent bullets |
-| `output/<name-prefix>_report.json` | Rendered content plus `extracted_keywords` and `custom_bullets_report` |
+| Flag | Scope | Default / behavior |
+| --- | --- | --- |
+| `--backend api|codex` | global | `api` |
+| `--model` | global | API model env vars or `gpt-4o`; Codex CLI default |
+| `--api-key` | global | API key env vars; not required for Codex |
+| `--base-url` | global | Configured API endpoint; API only |
+| `-p, --profile` | tailor | `profile.yaml` |
+| `-j, --jd` | tailor | Required local JD file |
+| `-o, --output` | ingest | `profile.yaml` |
+| `-o, --outdir` | tailor | `output/` |
+| `--name-prefix` | tailor | `tailored_resume` |
+| `--custom-bullets` | tailor | 3, integer ≥ 0 |
 
-Section order is fixed: Work Experience → Certifications → Education → Skills. There is no summary block. Default prefix is `tailored_resume`.
+## Verification after code changes
 
-## CLI reference
-
-| Flag | Applies to | Default | Meaning |
-| --- | --- | --- | --- |
-| `--api-key` | both | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `OPENCODE_API_KEY` | Bearer token |
-| `--base-url` | both | `OPENAI_BASE_URL` / `OPENROUTER_BASE_URL` / `OPENCODE_BASE_URL`, else `https://api.openai.com/v1` | Endpoint or shorthand |
-| `--model` | both | `OPENAI_MODEL` / `OPENROUTER_MODEL` / `OPENCODE_MODEL`, else `gpt-4o` | Model ID |
-| `-o, --output` | `ingest` | `profile.yaml` | Profile path to write |
-| `-p, --profile` | `tailor` | `profile.yaml` | Profile path to read |
-| `-j, --jd` | `tailor` | required | Job description file |
-| `-o, --outdir` | `tailor` | `output/` | Output directory |
-| `--name-prefix` | `tailor` | `tailored_resume` | Output filename prefix |
-| `--custom-bullets` | `tailor` | `3` | Custom bullets to inject (integer ≥ 1) |
-
-`-o` means different things per subcommand: profile path for `ingest`, output directory for `tailor`.
-
-## Humanizer guarantees (`blader/humanizer`)
-
-Every `tailor` run applies two stages:
-
-1. **LLM pass** — rewrites drafted bullets to match `voice_profile.sample_bullets` and removes AI tells: *not only X, but also Y*, forced triads, unauthorized dashes, stock words (*delve*, *pivotal*, *bolstered*, *meticulously*), shallow `-ing` riders (*...ensuring...*), and `**Label:**` prefixes. Metrics, tool names, and extracted keywords are preserved.
-2. **Deterministic pass** — `humanize_text_deterministic()` strips any surviving labels, curly quotes, unauthorized dashes, and `-ing` riders before rendering.
-
-## Verify
-
-```bash
-python3 test_resume_gen.py
-```
-
-Offline suite (mocks the LLM) covering ingestion, merging, tailoring, DOCX/PDF rendering, pagination, and the CLI flags. Run it after modifying `resume_gen.py`.
+Run `python3 test_resume_gen.py`; all plain test functions must be called from its `__main__` block. Offline checks validate behavior and failures without API keys. Visual inspection and actual model-backed runs are separate checks; report which were performed. See `skill-evaluation.md` for normal, sparse-profile, failure, and neighboring-request scenarios.

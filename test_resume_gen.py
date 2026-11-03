@@ -25,22 +25,20 @@ def test_humanizer_deterministic() -> None:
     cleaned = resume_gen.humanize_text_deterministic(raw, allow_dashes=False)
     assert "**" not in cleaned, f"Bold label remained: {cleaned}"
     assert "—" not in cleaned, f"Em dash remained: {cleaned}"
-    assert "meticulously" not in cleaned.lower(), f"AI buzzword remained: {cleaned}"
-    assert "ensuring" not in cleaned.lower(), f"Shallow -ing rider remained: {cleaned}"
-    assert ".9%" not in cleaned, f"Decimal number in rider left fragment: {cleaned}"
+    assert "ensuring 99.9% availability" in cleaned, f"Meaningful outcome lost: {cleaned}"
     assert "not only" not in cleaned.lower(), f"Not-only contrast remained: {cleaned}"
     assert "42.5%" in cleaned, f"Metric lost: {cleaned}"
     assert "--dry-run" in cleaned, f"Unspaced CLI flag corrupted: {cleaned}"
-    assert ". Scaled Kafka" in cleaned, f"Second sentence not capitalized: {cleaned}"
+    assert "3 regions" in cleaned, f"Scope lost: {cleaned}"
 
 
 def test_custom_bullets_cli_arg() -> None:
     parser = resume_gen.build_parser()
-    for count in ("1", "2", "5", "10"):
+    for count in ("0", "1", "2", "5", "10"):
         args = parser.parse_args(["tailor", "-j", "jd.txt", "--custom-bullets", count])
         assert args.custom_bullets == int(count)
     assert parser.parse_args(["tailor", "-j", "jd.txt"]).custom_bullets == 3
-    for bad in ("0", "-1"):
+    for bad in ("-1", "bad"):
         try:
             parser.parse_args(["tailor", "-j", "jd.txt", "--custom-bullets", bad])
         except SystemExit:
@@ -145,6 +143,63 @@ def test_custom_bullet_count_warns() -> None:
         assert code == 0
         assert "requested 5 custom bullets, model returned 1" in err.getvalue()
         assert not list((tmpdir / "out").glob("*.tmp"))
+
+
+def test_custom_bullets_restored_when_humanizer_drops_them() -> None:
+    # The humanizer pass drops the custom bullet entirely: the draft must still carry it.
+    draft = {
+        "extracted_keywords": ["Python"],
+        "skills": ["Python"],
+        "roles": [
+            {
+                "company": "C",
+                "title": "T",
+                "bullets": [
+                    {"text": "Automated evidence collection for SOC 2 audits", "is_custom": True},
+                    {"text": "Ran weekly reviews", "is_custom": False},
+                ],
+            }
+        ],
+    }
+    dropped = {
+        "extracted_keywords": ["Python"],
+        "skills": ["Python"],
+        "roles": [{"company": "C", "title": "T", "bullets": ["Ran weekly reviews"]}],
+    }
+    with patch("resume_gen.call_llm_json", side_effect=[draft, dropped]):
+        out = resume_gen.tailor_resume({"skills": ["Python"], "roles": []}, "jd", api_key="k")
+    assert [b["text"] for b in out["roles"][0]["bullets"]] == [
+        "Automated evidence collection for SOC 2 audits.",
+        "Ran weekly reviews.",
+    ]
+    assert [c["text"] for c in out["custom_bullets_report"]] == [
+        "Automated evidence collection for SOC 2 audits."
+    ]
+
+    # The custom bullet survives as a rewrite but loses its flag: claim it, never duplicate it.
+    unflagged = {
+        "extracted_keywords": ["Python"],
+        "skills": ["Python"],
+        "roles": [
+            {
+                "company": "C",
+                "title": "T",
+                "bullets": [
+                    {"text": "Ran weekly reviews", "is_custom": False},
+                    {"text": "Automated SOC 2 audit evidence collection", "is_custom": False},
+                ],
+            }
+        ],
+    }
+    with patch("resume_gen.call_llm_json", side_effect=[draft, unflagged]):
+        out = resume_gen.tailor_resume({"skills": ["Python"], "roles": []}, "jd", api_key="k")
+    assert [b["text"] for b in out["roles"][0]["bullets"]] == [
+        "Automated SOC 2 audit evidence collection.",
+        "Ran weekly reviews.",
+    ]
+    assert [c["text"] for c in out["custom_bullets_report"]] == [
+        "Automated SOC 2 audit evidence collection."
+    ]
 
 
 def test_role_and_bullet_matching() -> None:
@@ -311,7 +366,9 @@ def test_retry_serialization_and_empty_bullets() -> None:
     import socket
 
     with patch("urllib.request.urlopen", side_effect=[socket.timeout("slow"), Ok()]), patch("time.sleep"):
-        assert resume_gen.call_llm_json("s", "u", api_key="k") == {"ok": True}
+        assert resume_gen.call_llm_json(
+            "s", "u", api_key="k", base_url="https://api.openai.com/v1"
+        ) == {"ok": True}
 
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
@@ -384,7 +441,7 @@ def test_call_llm_json_and_bad_docx() -> None:
             return json.dumps(body).encode("utf-8")
 
     with patch("urllib.request.urlopen", return_value=FakeResp()):
-        res = resume_gen.call_llm_json("sys", "user", api_key="k")
+        res = resume_gen.call_llm_json("sys", "user", api_key="k", base_url="https://api.openai.com/v1")
         assert res == {"ok": True}
 
     # Verify OpenCode Go endpoint routing across all 4 API families
@@ -606,11 +663,11 @@ def test_ingest_merge_and_tailor_pipeline() -> None:
         assert "Jane Doe" in docx_text
         assert "Dagster" in docx_text
         assert "**Orchestration:**" not in docx_text
-        assert "ensuring 99.9%" not in docx_text
-        assert ".9%" not in docx_text
+        assert "ensuring 99.9%" in docx_text
         assert "SKILLS" in docx_text
         assert "CERTIFICATIONS" in docx_text
         assert "AWS Certified Security - Specialty" in docx_text
+        assert docx_text.index("CERTIFICATIONS") < docx_text.index("WORK EXPERIENCE")
 
         pdf_text = resume_gen.extract_text_from_file(pdf_file)
         assert "Jane Doe" in pdf_text
@@ -618,11 +675,12 @@ def test_ingest_merge_and_tailor_pipeline() -> None:
         assert "Dagster" in pdf_text
         assert "CERTIFICATIONS" in pdf_text
         assert "AWS Certified Security - Specialty" in pdf_text
+        assert pdf_text.index("CERTIFICATIONS") < pdf_text.index("WORK EXPERIENCE")
 
         report = json.loads(report_file.read_text(encoding="utf-8"))
         assert len(report["custom_bullets_report"]) == 3
 
-        # Skills may only come from profile.skills or extracted_keywords
+        # The drafting pass selects skills; the style pass cannot add or reselect them.
         assert "Kubernetes" not in report["skills"]
         assert "Dagster" in report["skills"]
         assert "SQL" in report["skills"]
@@ -646,11 +704,223 @@ def test_ingest_merge_and_tailor_pipeline() -> None:
         assert "improvement #64 " in mp_text
 
 
+def test_codex_backend() -> None:
+    import subprocess
+
+    invocations = []
+
+    def fake_run(command, **kwargs):
+        invocations.append((command, kwargs))
+        output = Path(command[command.index("--output-last-message") + 1])
+        assert output.parent == Path(kwargs["cwd"])
+        assert Path(kwargs["cwd"]) != Path.cwd()
+        assert "TASK INSTRUCTIONS:\nsystem" in kwargs["input"]
+        assert "INPUT DATA:\nuser" in kwargs["input"]
+        assert kwargs["timeout"] == 600
+        output.write_text('{"ok": true}', encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="event log, not JSON", stderr="")
+
+    with patch("resume_gen.shutil.which", return_value="/test/codex"), patch(
+        "resume_gen.subprocess.run", side_effect=fake_run
+    ), patch("urllib.request.urlopen", side_effect=AssertionError("API must not be called")):
+        assert resume_gen.call_llm_json("system", "user", backend="codex") == {"ok": True}
+        assert resume_gen.call_llm_json("system", "user", backend="codex", model="chosen-model") == {"ok": True}
+    default_command = invocations[0][0]
+    assert "--model" not in default_command
+    assert default_command[default_command.index("--sandbox") + 1] == "read-only"
+    assert "--ephemeral" in default_command and default_command[-1] == "-"
+    assert invocations[1][0][invocations[1][0].index("--model") + 1] == "chosen-model"
+    assert all(not Path(kwargs["cwd"]).exists() for _, kwargs in invocations)
+
+    with patch("resume_gen.shutil.which", return_value=None):
+        try:
+            resume_gen.call_llm_json("s", "u", backend="codex")
+        except RuntimeError as exc:
+            assert "not found" in str(exc) and "codex login" in str(exc)
+        else:
+            raise AssertionError("missing executable must fail")
+
+    for result, message in [
+        (subprocess.CompletedProcess([], 1, stdout="", stderr="Please log in"), "codex login status"),
+        (subprocess.CompletedProcess([], 0, stdout="", stderr=""), "final response"),
+        (subprocess.TimeoutExpired("codex", 600), "timed out"),
+        (OSError("cannot execute"), "Could not start"),
+    ]:
+        options = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+        with patch("resume_gen.shutil.which", return_value="/test/codex"), patch(
+            "resume_gen.subprocess.run", **options
+        ):
+            try:
+                resume_gen.call_llm_json("s", "u", backend="codex")
+            except RuntimeError as exc:
+                assert message in str(exc)
+            else:
+                raise AssertionError(f"expected failure: {message}")
+
+    for content in ("", "[]", "not json"):
+        with patch("resume_gen._call_codex", return_value=content):
+            try:
+                resume_gen.call_llm_json("s", "u", backend="codex")
+            except (RuntimeError, ValueError):
+                pass
+            else:
+                raise AssertionError("invalid Codex response must fail")
+
+
+def test_codex_cli_pipeline() -> None:
+    # Exercise both CLI commands through the real dispatcher without an API key or network.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "resume.txt"
+        source.write_text("Candidate built services.", encoding="utf-8")
+        profile_path = root / "profile.yaml"
+        jd = root / "jd.txt"
+        jd.write_text("Python engineer", encoding="utf-8")
+        profile = {"basics": {"name": "Candidate"}, "skills": ["Python"], "roles": [
+            {"company": "C", "title": "T", "bullets": ["Built services."]}
+        ]}
+        draft = {"skills": ["Python"], "extracted_keywords": ["Python"], "roles": [
+            {"company": "C", "title": "T", "bullets": [{"text": "Built services.", "is_custom": True}]}
+        ]}
+        with patch("resume_gen._call_codex", side_effect=[json.dumps(profile), json.dumps(draft), json.dumps(draft)]) as call, patch(
+            "urllib.request.urlopen", side_effect=AssertionError("API must not be called")
+        ):
+            common = ["--backend", "codex", "--api-key", ""]
+            assert resume_gen.main(common + ["ingest", str(source), "-o", str(profile_path)]) == 0
+            assert resume_gen.main(common + ["tailor", "-p", str(profile_path), "-j", str(jd),
+                                            "-o", str(root / "out"), "--custom-bullets", "1"]) == 0
+            assert call.call_count == 3
+            assert all(c.args[2] is None for c in call.call_args_list)
+        for suffix in (".pdf", ".docx", "_report.json"):
+            assert (root / "out" / f"tailored_resume{suffix}").stat().st_size > 0
+        parser = resume_gen.build_parser()
+        assert parser.parse_args(["tailor", "-j", "jd.txt"]).backend == "api"
+
+
+def test_brainstorming_and_stable_selection() -> None:
+    import copy
+    profile = {"basics": {"name": "Sample"}, "skills": ["Python"], "roles": [
+        {"company": "Acme", "title": "Analyst", "dates": "2020-Present", "bullets": ["Cut spend by 28%."]},
+        {"company": "Earlier", "title": "Engineer", "dates": "2017-2020", "bullets": ["Built systems."]},
+    ], "education": [{"school": "A", "degree": "MS"}, {"school": "B", "degree": "JD"}],
+       "certifications": ["CISSP", "Bar"]}
+    original = copy.deepcopy(profile)
+    draft = {
+        "job_analysis": {"target_role": "Risk Lead", "positioning": "Risk and automation", "requirements": [
+            {"theme": "Control maturity", "priority": "required", "application": "Show assessment ownership"}]},
+        "extracted_keywords": ["GRC"], "skills": ["C2M2", "ServiceNow IRM", "Python", "python"],
+        "education_order": [1, 1, True, 99], "certification_order": [1],
+        "roles": [{"id": "r1", "company": "Wrong", "title": "Wrong", "dates": "Wrong", "bullets": [
+            {"id": "r1.custom1", "text": "Built a maturity roadmap.", "is_custom": True,
+             "rationale": "Proposed maturity ownership", "detail_prompts": ["Add stakeholder groups"]},
+            {"id": "r1.b1", "text": "Cut spend by 28%, ensuring capacity across 3 regions.", "is_custom": False,
+             "is_expanded": True,
+             "rationale": "Expanded scope worth considering"},
+        ]}],
+        "brainstorming": [{"role_id": "r1", "theme": "Adoption", "text": "Trained [number] control owners.",
+                            "rationale": "Alternative platform adoption example"}],
+        "editorial_notes": ["Compressed older engineering experience"],
+    }
+    style = {"roles": [{"id": "r1", "bullets": [
+        {"id": "r1.b1", "text": "Cut spend by 28%."},  # loses the scope metric, so retain the draft
+        {"id": "r1.custom1", "text": "Created a maturity roadmap."},
+        {"id": "r1.extra", "text": "Unselected style invention."},
+    ]}]}
+    with patch("resume_gen.call_llm_json", side_effect=[draft, style]):
+        out = resume_gen.tailor_resume(profile, "Maturity leadership", custom_bullet_count=1, api_key="k")
+    assert profile == original
+    assert out["skills"] == ["C2M2", "ServiceNow IRM", "Python"]  # useful suggestions aren't evidence-filtered
+    assert [(r["company"], r["title"], r["dates"]) for r in out["roles"]] == [
+        ("Acme", "Analyst", "2020-Present"), ("Earlier", "Engineer", "2017-2020")]
+    assert [b["id"] for b in out["roles"][0]["bullets"]] == ["r1.custom1", "r1.b1"]
+    assert "3 regions" in out["roles"][0]["bullets"][1]["text"]
+    assert out["roles"][1]["bullets"][0]["text"] == "Built systems."
+    assert [e["school"] for e in out["education"]] == ["B", "A"]
+    assert out["certifications"] == ["Bar", "CISSP"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        notes = root / "review.md"
+        resume_gen.write_review_markdown(out, notes)
+        text = notes.read_text()
+        assert "Risk and automation" in text and "Add stakeholder groups" in text
+        assert "Trained [number]" in text and "Expanded scope" in text
+        docx = root / "draft.docx"
+        pdf = root / "draft.pdf"
+        resume_gen.write_ats_docx(out, docx)
+        resume_gen.write_ats_pdf(out, pdf)
+        for artifact in (docx, pdf):
+            text = resume_gen.extract_text_from_file(artifact)
+            assert "Created a maturity roadmap." in text and "C2M2" in text
+            assert "Trained" not in text and "Unselected style invention" not in text
+        import zipfile
+        with zipfile.ZipFile(docx) as z:
+            xml = z.read("word/document.xml").decode()
+            assert "w:keepNext" in xml and "w:keepLines" in xml
+
+
+def test_style_failure_and_draft_repair() -> None:
+    profile = {"roles": [{"company": "C", "title": "T", "bullets": ["Did useful work."]}]}
+    draft = {"roles": [{"id": "r1", "bullets": [
+        {"id": "r1.b1", "text": "Automated failover, ensuring 99.99% uptime across 3 regions.", "is_custom": False}]}]}
+    for style in ({}, {"roles": []}, RuntimeError("provider unavailable"), ValueError("bad JSON")):
+        with patch("resume_gen.call_llm_json", side_effect=[draft, style]):
+            out = resume_gen.tailor_resume(profile, "Automation", custom_bullet_count=0, api_key="k")
+        assert out["roles"][0]["bullets"][0]["text"].endswith("99.99% uptime across 3 regions.")
+        assert not out["custom_bullets_report"] and out["generation_notes"]
+    with patch("resume_gen.call_llm_json", side_effect=[{}, draft, {"roles": []}]) as call:
+        out = resume_gen.tailor_resume(profile, "Automation", custom_bullet_count=0, api_key="k")
+        assert call.call_count == 3 and out["roles"]
+    with patch("resume_gen.call_llm_json", side_effect=[ValueError("bad JSON"), draft, {"roles": []}]) as call:
+        assert resume_gen.tailor_resume(profile, "Automation", custom_bullet_count=0, api_key="k")["roles"]
+        assert call.call_count == 3
+    with patch("resume_gen.call_llm_json", side_effect=[{}, {}]) as call:
+        try:
+            resume_gen.tailor_resume(profile, "Automation", api_key="k")
+        except RuntimeError as exc:
+            assert "one repair" in str(exc) and call.call_count == 2
+        else:
+            raise AssertionError("empty draft must fail after one repair")
+
+
+def test_pdf_metrics_and_block_pagination() -> None:
+    import re
+    assert abs(resume_gen._pdf_text_width("Hello", 10) - 22.78) < 0.001
+    assert resume_gen._pdf_text_width("W", 10, bold=True) == 9.44
+    assert resume_gen._pdf_text_width("(test)", 10) > resume_gen._pdf_text_width("test", 10)
+    assert resume_gen._pdf_text_width("–", 10) == resume_gen._pdf_text_width("-", 10)
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf = Path(tmp) / "blocks.pdf"
+        resume = {"basics": {"name": "Sample"}, "roles": [{
+            "title": "Senior Governance Risk and Compliance Analyst " * 3, "company": "Long Company " * 3,
+            "location": "Somewhere", "dates": "2020-Present", "bullets": [
+                {"text": f"Bullet{i}: " + "Maintained controls and updated documentation. " * 3} for i in range(18)]}],
+            "education": [{"school": "SchoolOne", "degree": "MS"}, {"school": "SchoolTwo", "degree": "JD"}],
+            "skills": ["Risk management", "Automation"]}
+        resume_gen.write_ats_pdf(resume, pdf)
+        text = resume_gen.extract_text_from_file(pdf)
+        pages = text.split("\f")
+        assert len(pages) >= 3
+        assert any("SchoolOne" in page and "SchoolTwo" in page for page in pages)
+        assert "(continued)" in text
+        for i in range(18):
+            assert text.count(f"Bullet{i}:") == 1
+        # Actual text operators, rather than PDF source string lengths, must stay inside the margins.
+        raw = pdf.read_bytes().decode("latin-1")
+        coords = re.findall(r"Tf ([\d.]+) ([\d.]+) Td", raw)
+        assert coords and all(43 <= float(y) <= 749 for _, y in coords)
+
+
 if __name__ == "__main__":
+    test_brainstorming_and_stable_selection()
+    test_style_failure_and_draft_repair()
+    test_pdf_metrics_and_block_pagination()
+    test_codex_backend()
+    test_codex_cli_pipeline()
     test_humanizer_deterministic()
     test_custom_bullets_cli_arg()
     test_merge_extras_and_shape_guards()
     test_custom_bullet_count_warns()
+    test_custom_bullets_restored_when_humanizer_drops_them()
     test_dotenv_values_and_empty_jd()
     test_payload_temperature_and_pdf_edges()
     test_role_and_bullet_matching()
