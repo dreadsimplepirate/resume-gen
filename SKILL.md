@@ -10,11 +10,25 @@ Use `resume_gen.py` to turn career context and a specific job posting into a per
 ## Workflow
 
 1. **Read the target and career context.** Use the exact posting or supplied JD text. For a URL, retrieve the job and save its text locally with the URL and retrieval date. If unavailable, use a reproduction tied to the exact job ID and identify that source limitation. Ask for missing JD text only when no usable source is available. Do not substitute a different job.
-2. **Choose positioning.** Identify the actual work, business context, and important required/preferred qualifications. Use `profile.yaml` for strengths, career chronology, and voice. Do not rewrite it wholesale.
+2. **Choose positioning.** Identify the actual work, business context, and important required/preferred qualifications. Use `profile.yaml` for strengths, career chronology, and voice. Make the first three bullets of the most relevant recent role address the central job responsibilities with concrete scope and outcomes. Use important exact phrases naturally, with useful acronym expansions; keep past job titles intact. Do not rewrite the profile wholesale.
 3. **Generate and brainstorm.** Run `tailor`. Deliver the requested custom bullets in the resume; contextual proposals may include responsibilities or tools absent from the profile. Do not require a verification interview, confirmation, or approval before drafting. Preserve existing metrics; use placeholders in optional variants when numerical detail is needed. Keep degrees and certifications out of Skills.
 4. **Review the editorial choices.** Read the JSON and Markdown reports. Prioritize relevant accomplishments, integrate useful custom bullets near the top, consolidate repeated skills, and compress unrelated older roles. Aim for roughly 12–18 skills as a starting point, not a quota. Preserve chronology and requested custom content. Review substantive expansions of ordinary bullets as well as custom bullets in the editing notes.
 5. **Inspect both documents.** Render every page of DOCX and PDF using available document/PDF tools; compare extracted content with the report separately. Check heading/date separation, readability, whole bullets, Education grouping, and page balance. Prefer two balanced pages to one crowded page plus a fragment. Never shrink text merely to force one page.
-6. **Repair demonstrated issues and deliver.** Make one focused editorial/layout repair when needed and recheck affected artifacts. If a prerequisite is unavailable, deliver the usable draft and identify the unverified part. Include the resume files, concise positioning rationale, and editing notes. Clearly distinguish included proposals from optional alternatives. Do not promise an ATS score or hiring outcome.
+6. **Repair demonstrated issues and deliver.** Make one focused editorial/layout repair when needed and recheck affected artifacts. If a prerequisite is unavailable, deliver the usable draft and identify the unverified part. Include the resume files, concise positioning rationale, editing notes, and the generated-change checklist below. Clearly distinguish included proposals from optional alternatives. Do not promise an ATS score or hiring outcome.
+
+## Flag generated changes in the conversation
+
+After every generation, include a visible **Generated changes to review** section in the final chat reply. Read `changes_report` from the final JSON; a file link alone is insufficient. This comparison includes unflagged rewrites as well as model-flagged proposals.
+
+- For each custom/new/expanded bullet, show the employer, bullet ID, exact tailored wording, and specific facts or details for the user to check. Include original wording when available.
+- For other rewritten bullets, show original → tailored wording or the exact changed phrases, with the employer and ID. Do not assume a rewrite is factual expansion or omit it merely because `is_expanded` is false.
+- List every added or reworded skill term together. Some may be aliases for existing skills; do not describe them automatically as invented experience.
+- Group longer lists by employer rather than silently truncating them. Omit unchanged content and keep optional alternatives separate from changes already included in the resume.
+- Let the user refer to bullet IDs when requesting corrections. Flagging is for review after generation; do not pause or require confirmation before delivering the draft.
+
+Also show **Optional omissions for later editing** in the conversation report, using `omission_suggestions`. For each suggestion quote the credential or degree, explain why it may add less value for this specific role, and identify what could receive more emphasis instead. These are optional editing recommendations: retain every credential and degree in the delivered documents and preserve employment history. Do not add omission flags, remove entries automatically, or pause for a decision. If there is no useful omission, say so briefly. Do not infer that a credential has expired solely from its date.
+
+Assess final job alignment separately: check that the most important requirements have concrete examples, key phrases survive editing, and bullets communicate ownership and results. A keyword mention alone does not demonstrate a qualification. Clean text extraction and formatting checks improve readability but are not a test of a particular employer's ATS ranking.
 
 A neighboring request to explain a posting should be answered directly without generating resumes or modifying the profile.
 
@@ -73,7 +87,7 @@ For prefix `target_role`:
 
 - `output/target_role.docx` — editable resume.
 - `output/target_role.pdf` — single-column resume with balanced pagination.
-- `output/target_role_report.json` — selected content, `job_analysis`, `custom_bullets_report`, `brainstorming`, `editorial_notes`, and `generation_notes`.
+- `output/target_role_report.json` — selected content, `job_analysis`, `changes_report`, `omission_suggestions`, `custom_bullets_report`, `brainstorming`, `editorial_notes`, and `generation_notes`.
 - `output/target_role_review.md` — positioning, job themes, included proposals/expansions, optional alternatives, and details to consider afterward.
 
 Section order remains Certifications → Work Experience → Education → Skills, with no summary. All education and credential entries remain; their order can be tailored. The PDF's built-in fonts use WinAnsi; use DOCX for unsupported characters and report the limitation.

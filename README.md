@@ -45,6 +45,10 @@ To use your configured HTTP provider instead, omit `--backend codex` or select `
 - `output/target_role_report.json`: selected content and generation details.
 - `output/target_role_review.md`: positioning, job themes, included proposals and expansions, alternatives, and details worth adding during editing.
 
+The report's `changes_report` compares final bullets and skill terms against the profile, including rewrites the model did not flag. The command prints this checklist with original/tailored wording. When the agent runs the skill, it also shows generated changes directly in the conversation so you can review them and refer to bullet IDs for corrections.
+
+The conversation and editing report also suggest optional credential or degree omissions for later editing, with job-specific reasons. These suggestions do not remove anything from the generated resumes; every credential and degree remains included.
+
 The generator analyzes the actual role rather than relying only on keywords. Its second pass edits selected text; missing style edits fall back to the draft. Formatting cleanup preserves meaningful outcome clauses and numerical results. Both exports use the same selected content in Certifications → Work Experience → Education → Skills order, with no summary. Degree and credential order can be tailored without deleting entries.
 
 Check the documents visually before sending. PDF uses built-in WinAnsi fonts and warns about unsupported characters; DOCX preserves Unicode. No ATS score or hiring outcome is guaranteed.

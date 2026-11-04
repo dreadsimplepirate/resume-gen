@@ -910,7 +910,84 @@ def test_pdf_metrics_and_block_pagination() -> None:
         assert coords and all(43 <= float(y) <= 749 for _, y in coords)
 
 
+def test_final_changes_are_visible_without_model_flags() -> None:
+    profile = {"skills": ["Python", "NIST"], "roles": [{"company": "Acme", "title": "Analyst", "bullets": [
+        "Assessed NIST controls.", "Maintained documentation.", "Supported 12 audits."
+    ]}]}
+    resume = {"skills": ["python", "NIST CSF", "ServiceNow IRM"], "roles": [
+        {"id": "r1", "company": "Acme", "title": "Analyst", "bullets": [
+            {"id": "r1.b1", "text": "Assessed NIST CSF and COSO controls.", "is_expanded": False},
+            {"id": "r1.b2", "text": "Maintained documentation."},
+            {"id": "r1.b3", "text": "Supported 12+ audits."},
+            {"id": "r1.custom1", "text": "Built a control roadmap.", "is_custom": True,
+             "detail_prompts": ["Check control domains and your ownership."]},
+            {"id": "r1.unknown", "text": "Trained control owners.", "is_custom": False},
+        ]}], "brainstorming": [{"text": "OPTIONAL alternative, not included."}]}
+    changes = resume_gen.build_changes_report(profile, resume)
+    bullets = {c["id"]: c for c in changes if c["kind"] != "added_skill"}
+    assert set(bullets) == {"r1.b1", "r1.b3", "r1.custom1", "r1.unknown"}
+    assert bullets["r1.b1"]["original_text"] == "Assessed NIST controls."
+    assert bullets["r1.b1"]["text"] == "Assessed NIST CSF and COSO controls."
+    assert bullets["r1.b1"]["kind"] == "rewritten_bullet"
+    assert bullets["r1.b3"]["original_text"] == "Supported 12 audits."
+    assert bullets["r1.custom1"]["kind"] == "custom_bullet"
+    assert bullets["r1.unknown"]["original_text"] is None
+    assert bullets["r1.unknown"]["kind"] == "new_bullet"
+    assert [c["text"] for c in changes if c["kind"] == "added_skill"] == ["NIST CSF", "ServiceNow IRM"]
+    text = resume_gen.format_changes_markdown(changes)
+    assert "Assessed NIST controls." in text and "Assessed NIST CSF and COSO controls." in text
+    assert "Check control domains and your ownership." in text
+    assert "Maintained documentation" not in text and "OPTIONAL" not in text
+    assert "12+ audits" in text and "NIST CSF; ServiceNow IRM" in text
+    assert "No changed bullets" in resume_gen.format_changes_markdown([])
+
+
+def test_omission_advice_never_removes_exported_entries() -> None:
+    import copy
+    profile = {"certifications": ["CISSP", "Security+ (2018-2021)"],
+               "education": [{"school": "Tech University", "degree": "MS Computer Science"},
+                             {"school": "State University", "degree": "BA International Relations"}],
+               "roles": [{"company": "Acme", "title": "Analyst", "bullets": ["Assessed controls."]}]}
+    original = copy.deepcopy(profile)
+    draft = {"certification_order": [1, 0], "education_order": [1, 0], "roles": [
+        {"id": "r1", "bullets": [{"id": "r1.b1", "text": "Assessed controls."}]}],
+        "omission_suggestions": [
+            {"section": "certifications", "index": 1, "reason": "CISSP is more relevant to this senior role.",
+             "benefit": "Give risk leadership more space."},
+            {"section": "education", "index": 1, "reason": "The technical master's is more relevant."},
+            {"section": "certifications", "index": 1, "reason": "Duplicate suggestion"},
+            {"section": "education", "index": 99, "reason": "Unknown entry"},
+            {"section": "roles", "index": 0, "reason": "Wrong section"},
+            {"section": [], "index": 0, "reason": "Malformed section"},
+            {"section": "education", "index": True, "reason": "Boolean is not an index"},
+            {"section": "education", "index": 0, "reason": ""},
+        ]}
+    with patch("resume_gen.call_llm_json", side_effect=[draft, draft]):
+        out = resume_gen.tailor_resume(profile, "Senior IT risk lead", custom_bullet_count=0, api_key="k")
+    assert profile == original
+    assert out["certifications"] == ["Security+ (2018-2021)", "CISSP"]
+    assert len(out["education"]) == 2 and len(out["roles"]) == 1
+    assert len(out["omission_suggestions"]) == 2
+    assert out["omission_suggestions"][0]["text"] == "Security+ (2018-2021)"
+    assert out["omission_suggestions"][1]["text"] == "BA International Relations | State University"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        resume_gen.write_review_markdown(out, root / "notes.md")
+        notes = (root / "notes.md").read_text()
+        assert "Optional omissions for later editing" in notes
+        assert "Give risk leadership more space" in notes and "every" in notes.lower()
+        for extension, writer in (("docx", resume_gen.write_ats_docx), ("pdf", resume_gen.write_ats_pdf)):
+            path = root / f"draft.{extension}"
+            writer(out, path)
+            text = resume_gen.extract_text_from_file(path)
+            assert "Security+ (2018-2021)" in text and "BA International Relations" in text
+            assert "CISSP is more relevant" not in text
+    assert "No specific" in resume_gen.format_omission_suggestions([])
+
+
 if __name__ == "__main__":
+    test_omission_advice_never_removes_exported_entries()
+    test_final_changes_are_visible_without_model_flags()
     test_brainstorming_and_stable_selection()
     test_style_failure_and_draft_repair()
     test_pdf_metrics_and_block_pagination()
